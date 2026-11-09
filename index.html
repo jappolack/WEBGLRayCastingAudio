@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Three.js Interaction Demo</title>
+
+    <style>
+        body {
+            margin:0;
+            overflow:hidden;
+        }
+
+        #score {
+            position:absolute;
+            top:20px;
+            left:20px;
+            color:white;
+            font-size:28px;
+            background:black;
+            padding:10px;
+        }
+
+        #message {
+            position:absolute;
+            top:70px;
+            left:20px;
+            color:yellow;
+            font-size:24px;
+        }
+
+        #ray-debug {
+            position:fixed;
+            top:16px;
+            right:16px;
+            width:180px;
+            height:180px;
+            border:1px solid rgba(255,255,255,0.65);
+            background:rgba(12,18,24,0.92);
+            pointer-events:none;
+        }
+
+        @media (max-width:480px) {
+            #ray-debug {
+                top:8px;
+                right:8px;
+                width:140px;
+                height:140px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+<div id="score">Score: 0</div>
+<div id="message"></div>
+<canvas id="ray-debug" width="180" height="180" aria-label="Top-down camera and raycast debug view"></canvas>
+
+<script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+        }
+    }
+</script>
+<script type="module" src="js/main.js"></script>
+
+</body>
+</html>
