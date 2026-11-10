@@ -1,6 +1,6 @@
 # WEBGLRayCastingAudio
 
-A small Three.js coin-collection demo. Move the character around the ground, collect coins, and watch the score increase. A roaming opponent uses raycasting to detect the woman; when he gets close, she draws her pistol. Press `F` to fire. A shot only defeats him if its ray hits.
+A small Three.js interaction demo. Move the character around the ground, collect coins, and toggle the chest by clicking it. A roaming opponent uses raycasting to detect the woman; when he gets close, the boss track starts and she draws her pistol. Press `F` to fire. A shot only defeats him if its ray hits.
 
 ## Run
 
@@ -17,6 +17,7 @@ Open [http://localhost:8000](http://localhost:8000) in a browser. Three.js is lo
 - `W`, `A`, `S`, `D` or the arrow keys: move the character
 - `Space`: collect a coin when close to it
 - `F`: fire the pistol when the bad guy is nearby
+- Mouse click: open or close the chest when selected
 
 Coins are relocated to new ground positions after collection. The score increases by one, and the character plays the pickup animation.
 
@@ -27,4 +28,6 @@ Coins are relocated to new ground positions after collection. The score increase
 - `models/female.glb`: character model and animations
 - `models/badguy.glb`: roaming opponent model and animations
 - `models/pistol.glb`: pistol attached to the woman's right hand
+- `models/chest.glb`: chest with open and close animations
 - `audio/coin.mp3`: coin collection sound
+- `audio/boss.mp3`: looping close-range fight music

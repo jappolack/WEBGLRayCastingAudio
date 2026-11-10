@@ -38,12 +38,49 @@
             pointer-events:none;
         }
 
+        #ray-legend {
+            position:fixed;
+            top:204px;
+            right:16px;
+            width:180px;
+            box-sizing:border-box;
+            padding:8px 10px;
+            border:1px solid rgba(255,255,255,0.65);
+            background:rgba(12,18,24,0.92);
+            color:#f2f5f7;
+            font:12px/1.6 sans-serif;
+            pointer-events:none;
+        }
+
+        #ray-legend div {
+            display:flex;
+            align-items:center;
+            gap:7px;
+        }
+
+        .ray-swatch {
+            width:9px;
+            height:3px;
+            flex:none;
+        }
+
+        .ray-camera { background:#ff3b30; }
+        .ray-chair { background:#4de1c1; }
+        .ray-enemy { background:#ff9e35; }
+        .ray-pistol { background:#ffe45e; }
+
         @media (max-width:480px) {
             #ray-debug {
                 top:8px;
                 right:8px;
                 width:140px;
                 height:140px;
+            }
+
+            #ray-legend {
+                top:156px;
+                right:8px;
+                width:140px;
             }
         }
     </style>
@@ -54,6 +91,12 @@
 <div id="score">Score: 0</div>
 <div id="message"></div>
 <canvas id="ray-debug" width="180" height="180" aria-label="Top-down camera and raycast debug view"></canvas>
+<div id="ray-legend" aria-label="Raycast line colors">
+    <div><span class="ray-swatch ray-camera"></span>Camera / coins</div>
+    <div><span class="ray-swatch ray-chair"></span>Chair interaction</div>
+    <div><span class="ray-swatch ray-enemy"></span>Enemy detection</div>
+    <div><span class="ray-swatch ray-pistol"></span>Pistol shot</div>
+</div>
 
 <script type="importmap">
     {

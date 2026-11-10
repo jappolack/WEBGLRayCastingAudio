@@ -13,12 +13,25 @@ const PLAYER_SPEED = 5;
 const ENEMY_SPEED = 1.8;
 const ENEMY_WANDER_RANGE = 9;
 const ENEMY_DETECTION_RANGE = 2.5;
+const FIGHT_DURATION = 2.6;
+const ENEMY_DETOUR_ANGLES = [
+    0,
+    Math.PI / 4,
+    -Math.PI / 4,
+    Math.PI / 2,
+    -Math.PI / 2,
+    3 * Math.PI / 4,
+    -3 * Math.PI / 4,
+    Math.PI
+];
 const PISTOL_SHOT_RANGE = 20;
 const PISTOL_RAY_DURATION = 0.45;
 const PISTOL_BULLET_SPEED = 45;
 const CHAIR_RAY_LENGTH = 2.5;
 const CHAIR_COLLISION_RADIUS = 1.15;
+const CHEST_COLLISION_RADIUS = 1.2;
 const CHAIR_POSITION = new THREE.Vector3(0, 0, -5);
+const CHEST_POSITION = new THREE.Vector3(3, 0, -5);
 const SIT_TRANSITION_DURATION = 0.4;
 const RAYCAST_DEBUG_LENGTH = 30;
 const RAYCAST_MAP_RANGE = 15;
@@ -28,6 +41,7 @@ const debugRaycaster = new THREE.Raycaster();
 debugRaycaster.far = RAYCAST_DEBUG_LENGTH;
 const chairRaycaster = new THREE.Raycaster();
 chairRaycaster.far = CHAIR_RAY_LENGTH;
+const chestRaycaster = new THREE.Raycaster();
 const enemyRaycaster = new THREE.Raycaster();
 enemyRaycaster.far = ENEMY_DETECTION_RANGE;
 const pistolRaycaster = new THREE.Raycaster();
@@ -60,7 +74,12 @@ let pistolBullet;
 let rayMapContext;
 let coinSound;
 let walkingSound;
+let bossSound;
 let chair;
+let chest;
+let chestMixer;
+let chestOpenAction;
+let chestCloseAction;
 let player;
 let mixer;
 let enemy;
@@ -74,11 +93,18 @@ let pickupAction;
 let sitAction;
 let sitIdleAction;
 let playerShootAction;
+let playerFightAction;
+let playerDeathAction;
 let enemyIdleAction;
 let enemyWalkAction;
+let enemyFightAction;
 let enemyDeathAction;
 let score = 0;
 let isWalking = false;
+let isChestOpen = false;
+let isBossFightActive = false;
+let isFightActive = false;
+let isPlayerDead = false;
 let isEnemyWalking = false;
 let isPickingUp = false;
 let isSittingDown = false;
@@ -88,6 +114,7 @@ let isPistolDrawn = false;
 let isAimingAtEnemy = false;
 let chairSitCooldown = 0;
 let enemyPauseTime = 0;
+let fightTimer = 0;
 let pistolRayTime = 0;
 let pistolShotPending = false;
 let pistolBulletDirection = new THREE.Vector3();
@@ -151,7 +178,7 @@ function addCameraDebugVisuals()
     raycastLine = new THREE.Line(
         new THREE.BufferGeometry(),
         new THREE.LineBasicMaterial({
-            color: 0xff3300,
+            color: 0xff3b30,
             depthTest: false
         })
     );
@@ -333,6 +360,106 @@ function setupAudio()
         if(isWalking)
             walkingSound.play();
     });
+
+    bossSound = new THREE.Audio(listener);
+    bossSound.setLoop(true);
+    bossSound.setVolume(0.45);
+    new THREE.AudioLoader().load("audio/boss.mp3", buffer=>
+    {
+        bossSound.setBuffer(buffer);
+        if(isBossFightActive)
+            startBossMusic();
+    });
+}
+
+// Start the looping boss track when the close-range encounter begins.
+function startBossMusic()
+{
+    isBossFightActive = true;
+    if(!bossSound?.buffer || bossSound.isPlaying)
+        return;
+
+    if(bossSound.context.state === "suspended")
+        bossSound.context.resume();
+    bossSound.play();
+}
+
+// Stop boss music after the enemy is defeated.
+function stopBossMusic()
+{
+    isBossFightActive = false;
+    if(bossSound?.isPlaying)
+        bossSound.stop();
+}
+
+// Toggle the chest only when a click ray intersects one of its meshes.
+function handleChestClick(event)
+{
+    if(!chest || !chestOpenAction || !chestCloseAction)
+        return;
+
+    const bounds = renderer.domElement.getBoundingClientRect();
+    const pointer = new THREE.Vector2(
+        ((event.clientX - bounds.left) / bounds.width) * 2 - 1,
+        -((event.clientY - bounds.top) / bounds.height) * 2 + 1
+    );
+
+    camera.updateMatrixWorld(true);
+    chest.updateMatrixWorld(true);
+    chestRaycaster.setFromCamera(pointer, camera);
+    if(chestRaycaster.intersectObject(chest, true).length === 0)
+        return;
+
+    isChestOpen = !isChestOpen;
+    chestOpenAction.stop();
+    chestCloseAction.stop();
+    const action = isChestOpen ? chestOpenAction : chestCloseAction;
+    action.reset();
+    action.setLoop(THREE.LoopOnce, 1);
+    action.clampWhenFinished = true;
+    action.play();
+
+    if(coinSound?.buffer)
+    {
+        if(coinSound.isPlaying)
+            coinSound.stop();
+        coinSound.play();
+    }
+    setMessage(isChestOpen ? "Chest opened!" : "Chest closed!");
+}
+
+// Load the chest with its authored open and close animations.
+function loadChest()
+{
+    const loader = new GLTFLoader();
+    loader.load(
+        "models/chest.glb",
+        gltf=>
+        {
+            chest = gltf.scene;
+            chest.position.copy(CHEST_POSITION);
+            scene.add(chest);
+
+            chestMixer = new THREE.AnimationMixer(chest);
+            const openClip = gltf.animations.find(clip=>/chest_open$/i.test(clip.name));
+            const closeClip = gltf.animations.find(clip=>/chest_close$/i.test(clip.name));
+            if(openClip && closeClip)
+            {
+                chestOpenAction = chestMixer.clipAction(openClip);
+                chestCloseAction = chestMixer.clipAction(closeClip);
+            }
+            else
+                setMessage("The chest animations could not be found in models/chest.glb.");
+        },
+        undefined,
+        ()=>setMessage("The chest model could not load. Check models/chest.glb and the browser console.")
+    );
+}
+
+// Register mouse selection for the chest model.
+function setupChestControls()
+{
+    renderer.domElement.addEventListener("click", handleChestClick);
 }
 
 // Display a short gameplay status message.
@@ -367,7 +494,7 @@ function playPickupAnimation()
 // Find and begin collecting a coin within pickup distance.
 function collectNearbyCoin()
 {
-    if(!player || isPickingUp || isSittingDown || isSitting || isPistolDrawn)
+    if(!player || isPickingUp || isSittingDown || isSitting)
         return;
 
     const coin = coins.find(candidate=>
@@ -383,8 +510,11 @@ function collectNearbyCoin()
         return;
     }
 
-    pickupMidpointReached = false;
-    playPickupAnimation();
+    if(!isPistolDrawn)
+    {
+        pickupMidpointReached = false;
+        playPickupAnimation();
+    }
     if(isPickingUp)
     {
         pendingCoin = coin;
@@ -576,6 +706,9 @@ function setupPlayerAnimations(animations)
     const shootClip = animations.find(clip=>
         /punch/i.test(clip.name)
     );
+    const deathClip = animations.find(clip=>
+        /death|die/i.test(clip.name)
+    );
     if(idleClip)
     {
         idleAction = mixer.clipAction(createLocomotionClipWithoutGunArm(idleClip));
@@ -596,6 +729,7 @@ function setupPlayerAnimations(animations)
 
     if(shootClip)
     {
+        playerFightAction = mixer.clipAction(shootClip);
         const rightArmTracks = shootClip.tracks.filter(isRightArmTrack);
         if(rightArmTracks.length > 0)
         {
@@ -607,6 +741,9 @@ function setupPlayerAnimations(animations)
             playerShootAction = mixer.clipAction(armShootClip);
         }
     }
+
+    if(deathClip)
+        playerDeathAction = mixer.clipAction(deathClip);
 
     mixer.addEventListener("finished", finishPickupAnimation);
     mixer.addEventListener("finished", finishSitDownAnimation);
@@ -621,7 +758,7 @@ function onPlayerLoaded(gltf)
 
     mixer = new THREE.AnimationMixer(player);
     setupPlayerAnimations(gltf.animations);
-    setMessage("Move toward the chair to sit. Press a movement key to stand; Space collects nearby coins.");
+    setMessage("Click the chest to open or close it. Move toward the chair to sit; Space collects nearby coins.");
     attachPistolToPlayer();
 }
 
@@ -726,6 +863,9 @@ function setupEnemyAnimations(animations)
     const deathClip = animations.find(clip=>
         /death|die/i.test(clip.name)
     );
+    const punchClip = animations.find(clip=>
+        /punch/i.test(clip.name)
+    );
 
     if(idleClip)
     {
@@ -735,6 +875,9 @@ function setupEnemyAnimations(animations)
 
     if(walkClip)
         enemyWalkAction = enemyMixer.clipAction(walkClip);
+
+    if(punchClip)
+        enemyFightAction = enemyMixer.clipAction(punchClip);
 
     if(deathClip)
         enemyDeathAction = enemyMixer.clipAction(deathClip);
@@ -804,10 +947,10 @@ function setEnemyWalking(walking)
     isEnemyWalking = walking;
 }
 
-// [RAYCAST] Cast from the enemy to detect the player and trigger the pistol draw.
+// [RAYCAST] Cast from the enemy to detect the player and trigger combat.
 function updateEnemyDetectionRay()
 {
-    if(!enemy || enemyIsDead)
+    if(!enemy || enemyIsDead || isPlayerDead)
     {
         if(enemyRayLine)
             enemyRayLine.visible = false;
@@ -880,14 +1023,15 @@ function aimPistolAtEnemy()
     isAimingAtEnemy = true;
 }
 
-// Stop the enemy and play its death animation after a confirmed ray hit.
-function handlePistolHit()
+// Stop the enemy and play its death animation after defeat.
+function handleEnemyDefeat(message)
 {
     if(enemyIsDead)
         return;
 
     enemyIsDead = true;
     enemyTarget = undefined;
+    stopBossMusic();
     setEnemyWalking(false);
     enemyWalkAction?.stop();
     enemyIdleAction?.fadeOut(0.1);
@@ -900,12 +1044,103 @@ function handlePistolHit()
         enemyDeathAction.fadeIn(0.1).play();
     }
 
-    setMessage("The shot hit the bad guy.");
+    setMessage(message);
+}
+
+// Start the authored punch animations for both fighters.
+function beginFight()
+{
+    if(isFightActive || isPlayerDead || enemyIsDead)
+        return;
+
+    isFightActive = true;
+    fightTimer = FIGHT_DURATION;
+    enemyTarget = undefined;
+    enemyPauseTime = 0;
+    clearPressedKeys();
+    walkingSound?.stop();
+    isWalking = false;
+    isPistolDrawn = false;
+    isAimingAtEnemy = false;
+    if(pistol)
+        pistol.visible = false;
+
+    walkAction?.stop();
+    idleAction?.stop();
+    playerShootAction?.stop();
+    enemyWalkAction?.stop();
+    enemyIdleAction?.stop();
+    isEnemyWalking = false;
+
+    const directionX = enemy.position.x - player.position.x;
+    const directionZ = enemy.position.z - player.position.z;
+    player.rotation.y = Math.atan2(directionX, directionZ);
+    enemy.rotation.y = Math.atan2(-directionX, -directionZ);
+
+    if(playerFightAction)
+        playerFightAction.reset()
+            .setLoop(THREE.LoopRepeat, Infinity)
+            .fadeIn(0.1)
+            .play();
+    if(enemyFightAction)
+        enemyFightAction.reset()
+            .setLoop(THREE.LoopRepeat, Infinity)
+            .fadeIn(0.1)
+            .play();
+
+    enemyRayLine.visible = false;
+    startBossMusic();
+    setMessage("The fight has started!");
+}
+
+// Randomly choose the winner after the punch exchange.
+function finishFight()
+{
+    if(!isFightActive)
+        return;
+
+    isFightActive = false;
+    playerFightAction?.stop();
+    enemyFightAction?.stop();
+
+    if(Math.random() < 0.5)
+        handleEnemyDefeat("The woman won the fight.");
+    else
+        handlePlayerDefeat();
+}
+
+// Play the player's built-in death animation after losing the fight.
+function handlePlayerDefeat()
+{
+    isPlayerDead = true;
+    isFightActive = false;
+    isAimingAtEnemy = false;
+    clearPressedKeys();
+    walkingSound?.stop();
+    stopBossMusic();
+    walkAction?.stop();
+    idleAction?.stop();
+    playerFightAction?.stop();
+    playerShootAction?.stop();
+
+    if(playerDeathAction)
+    {
+        playerDeathAction.reset();
+        playerDeathAction.setLoop(THREE.LoopOnce, 1);
+        playerDeathAction.clampWhenFinished = true;
+        playerDeathAction.fadeIn(0.1).play();
+    }
+
+    enemyIdleAction?.reset().fadeIn(0.1).play();
+    setMessage("The bad guy won the fight.");
 }
 
 // [RAYCAST] Cast from the pistol barrel; only an enemy mesh hit counts as a shot hit.
 function firePistol()
 {
+    if(isFightActive || isPlayerDead)
+        return;
+
     if(!isPistolDrawn)
         drawPistol();
 
@@ -928,13 +1163,14 @@ function firePistol()
     pistol.updateWorldMatrix(true, true);
 
     const origin = pistol.getWorldPosition(new THREE.Vector3());
-    const direction = new THREE.Vector3(1, 0, 0)
-        .applyQuaternion(pistol.getWorldQuaternion(new THREE.Quaternion()))
-        .normalize();
+    enemy.updateMatrixWorld(true);
+    const target = new THREE.Box3()
+        .setFromObject(enemy)
+        .getCenter(new THREE.Vector3());
+    const direction = target.sub(origin).normalize();
     origin.addScaledVector(direction, 0.28);
 
     pistolRaycaster.set(origin, direction);
-    enemy.updateMatrixWorld(true);
     const hits = pistolRaycaster.intersectObject(enemy, true);
     const hit = hits[0];
     const rayEnd = hit
@@ -953,7 +1189,7 @@ function firePistol()
     pistolBullet.visible = true;
 
     if(hit)
-        handlePistolHit();
+        handleEnemyDefeat("The shot hit the bad guy.");
     else
         setMessage("The shot missed.");
 }
@@ -1023,12 +1259,27 @@ function updatePistolShotRay(delta)
 // Patrol the enemy, test proximity by raycast, and react when the player is detected.
 function updateEnemy(delta)
 {
-    const playerDetected = updateEnemyDetectionRay();
-    if(!enemy || enemyIsDead)
+    if(!enemy || enemyIsDead || isPlayerDead)
         return;
 
-    if(playerDetected && !isPickingUp && !isSittingDown && !isSitting)
-        drawPistol();
+    if(isFightActive)
+    {
+        fightTimer = Math.max(0, fightTimer - delta);
+        if(fightTimer === 0)
+            finishFight();
+        return;
+    }
+
+    const playerDetected = updateEnemyDetectionRay();
+    if(playerDetected)
+    {
+        startBossMusic();
+        if(!isPickingUp && !isSittingDown && !isSitting)
+        {
+            beginFight();
+            return;
+        }
+    }
 
     if(enemyPauseTime > 0)
     {
@@ -1052,18 +1303,39 @@ function updateEnemy(delta)
     }
 
     const step = Math.min(ENEMY_SPEED * delta, distance);
-    let nextPosition = {
-        x: enemy.position.x + offsetX / distance * step,
-        z: enemy.position.z + offsetZ / distance * step
-    };
-    nextPosition = resolvePlayerCollision(
-        resolveCoinCollisions(resolveChairCollision(nextPosition))
-    );
+    let nextPosition;
+    let movementDirection;
+    let bestProgress = 0;
 
-    if(Math.hypot(
-        nextPosition.x - enemy.position.x,
-        nextPosition.z - enemy.position.z
-    ) < 0.001)
+    for(const angle of ENEMY_DETOUR_ANGLES)
+    {
+        const cosine = Math.cos(angle);
+        const sine = Math.sin(angle);
+        const directionX = offsetX / distance * cosine - offsetZ / distance * sine;
+        const directionZ = offsetX / distance * sine + offsetZ / distance * cosine;
+        const candidate = resolvePlayerCollision(
+            resolveCoinCollisions(
+                resolveChestCollision(resolveChairCollision({
+                    x: enemy.position.x + directionX * step,
+                    z: enemy.position.z + directionZ * step
+                }))
+                )
+        );
+        const candidateDistance = Math.hypot(
+            enemyTarget.x - candidate.x,
+            enemyTarget.z - candidate.z
+        );
+        const progress = distance - candidateDistance;
+
+        if(progress > bestProgress)
+        {
+            bestProgress = progress;
+            nextPosition = candidate;
+            movementDirection = { x: directionX, z: directionZ };
+        }
+    }
+
+    if(!nextPosition)
     {
         enemyTarget = undefined;
         setEnemyWalking(false);
@@ -1072,7 +1344,7 @@ function updateEnemy(delta)
 
     enemy.position.x = nextPosition.x;
     enemy.position.z = nextPosition.z;
-    enemy.rotation.y = Math.atan2(offsetX, offsetZ);
+    enemy.rotation.y = Math.atan2(movementDirection.x, movementDirection.z);
     setEnemyWalking(true);
 }
 
@@ -1089,6 +1361,9 @@ function onKeyDown(event)
 
     if(["w", "a", "s", "d", " "].includes(key))
         event.preventDefault();
+
+    if(isFightActive || isPlayerDead)
+        return;
 
     keys[key] = true;
 
@@ -1177,18 +1452,19 @@ function updatePlayerPosition(delta, movement)
         x: player.position.x + movement.x / movement.length * PLAYER_SPEED * delta,
         z: player.position.z + movement.z / movement.length * PLAYER_SPEED * delta
     };
-    const resolvedPosition = resolvePlayerCollisions(proposedPosition);
+        if(isFightActive || isPlayerDead || !movement.moving || isPickingUp || isSittingDown || isSitting)
 
     player.position.x = resolvedPosition.x;
     player.position.z = resolvedPosition.z;
     player.rotation.y = Math.atan2(movement.x, movement.z);
 }
 
-// Resolve player collisions in chair, coin, then enemy order.
+// Resolve player collisions against the chair, chest, coins, and enemy.
 function resolvePlayerCollisions(position)
 {
     const positionWithChairCollision = resolveChairCollision(position);
-    const positionWithCoinCollision = resolveCoinCollisions(positionWithChairCollision);
+    const positionWithChestCollision = resolveChestCollision(positionWithChairCollision);
+    const positionWithCoinCollision = resolveCoinCollisions(positionWithChestCollision);
     return resolveEnemyCollision(positionWithCoinCollision);
 }
 
@@ -1203,6 +1479,20 @@ function resolveChairCollision(position)
         chair.position.x,
         chair.position.z,
         CHAIR_COLLISION_RADIUS
+    );
+}
+
+// Keep characters outside the chest's collision radius.
+function resolveChestCollision(position)
+{
+    if(!chest)
+        return position;
+
+    return resolveCircularCollision(
+        position,
+        chest.position.x,
+        chest.position.z,
+        CHEST_COLLISION_RADIUS
     );
 }
 
@@ -1366,7 +1656,7 @@ function drawRaycastMap(rayEnd, chairRay)
 
     context.fillStyle = "#f2f5f7";
     context.font = "11px sans-serif";
-    context.fillText("CAMERA: RED  CHAIR: TEAL", 8, 14);
+    context.fillText("TOP-DOWN RAY MAP", 8, 14);
 
     const cameraPoint = toMap(camera.position.x, camera.position.z);
     const cameraRayPoint = toMap(rayEnd.x, rayEnd.z);
@@ -1468,6 +1758,8 @@ function animate()
     }
     if(enemyMixer)
         enemyMixer.update(delta);
+    if(chestMixer)
+        chestMixer.update(delta);
 
     updatePlayerFacing(getMovement());
     alignPistolWithArm();
@@ -1501,10 +1793,12 @@ function initialize()
     createCoins();
     addCameraDebugVisuals();
     setupAudio();
+    setupChestControls();
     setupKeyboardControls();
     loadPlayer();
     loadEnemy();
     loadPistol();
+    loadChest();
 
     clock = new THREE.Clock();
     window.addEventListener("resize", handleResize);
